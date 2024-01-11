@@ -350,7 +350,7 @@ agent=GA(TOTAL_STATES,TOTAL_ACTIONS,POPULATION_SIZE,generation_number=MAX_GENERA
 #asyncio.run(agent.fit_multithreads())
 
 
-agent.eval("lunarlander-continuous\weights_1398_coperative_near_highest.pth",30)
+agent.eval("lunarlander-discerete\weights_1956_individual_near_highest.pth",30)
 
 #highest 174,167
 
