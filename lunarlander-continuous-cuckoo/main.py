@@ -58,6 +58,11 @@ class Solution:
         self.myenv=myenv
     def get_median(self):
         return np.median(self.rewards)
+    
+    def get_fitness_value(self,length_weight=0.1,personal_reward_weight=0.3):
+        score=np.median(self.rewards)+ length_weight*len(self.rewards)+self.reward*personal_reward_weight
+        return score
+
     def assign_random_values(self,):
         flat_weights=self.get_flatten_weights()
         index=0
@@ -171,50 +176,38 @@ class Cuckoo:
             self.env_stds=torch.cat((self.env_stds,states),dim=0)
 
 
-
-
+        total_selecte_for_nesting=int(self.population_size*self.alpha)
         for generation in range(self.generation_number):
             t1=time.time()
 
-            total_selecte_for_nesting=int(self.population_size*self.alpha)
-            new_popuation=copy.deepcopy(self.Populations[:total_selecte_for_nesting]) 
-            self.Populations=sorted(self.Populations,key=lambda x: x.reward,reverse=True)
-            best_nest = copy.deepcopy(self.Populations[0]) 
+           
+            self.Populations=sorted(self.Populations,key=lambda x: x.get_fitness_value(),reverse=True)
 
+            print(f"best nest have total experience of {len(self.Populations[0].rewards)}->{self.Populations[0].rewards}")
             for i in range(total_selecte_for_nesting):
                 # Generate new solutions (cuckoo eggs) using Levy flights
-                ith_nest=new_popuation[i].get_flatten_weights()
+                ith_nest=self.Populations[i].get_flatten_weights()
                 step = torch.tensor(self.levy_flight(),dtype=torch.float32) 
-                indicies=torch.randint(1, len(ith_nest)-1, (torch.randint(1,len(ith_nest)-1,size=(1,)).item(),))
+                indicies=torch.randint(1, len(ith_nest), (torch.randint(1,total_selecte_for_nesting,size=(1,)).item(),))
                 ith_nest[indicies] = ith_nest[indicies] + step * torch.tensor(self.get_normal(len(ith_nest[indicies])),dtype=torch.float32)
-                new_popuation[i].update_wights(ith_nest)
-                states=new_popuation[i].calculate_reward()
+                self.Populations[i].update_wights(ith_nest)
+                states=self.Populations[i].calculate_reward()
                 self.env_means=torch.cat((self.env_means,states),dim=0)
                 self.env_stds=torch.cat((self.env_stds,states),dim=0)
-
-                # Replace nests with better solutions
-                if new_popuation[i].reward >self.Populations[i].reward:
-                    self.Populations[i] =copy.deepcopy(new_popuation[i])
-
-                    # Update best solution if found
-                    if self.Populations[i].reward> best_nest.reward:
-                        print(f"best solution updated from {best_nest.reward} to {self.Populations[i].reward}")
-                        best_nest = copy.deepcopy(self.Populations[i])
-
-           
             # Abandon a fraction (Pa) of worse nests
-            abondon_egg_range=self.population_size-total_selecte_for_nesting
-
-            selected_indices = np.random.choice(range(total_selecte_for_nesting-1, self.population_size-1), size=abondon_egg_range, replace=False)
-            for i in selected_indices:
+            for i in range(total_selecte_for_nesting, self.population_size):
                 new_nest = Solution(NeuralNetwork(input=self.input,output=self.output),myenv=gym.make(env_name,continuous=True),device=self.device)
                 weights=new_nest.get_flatten_weights()
-                new_weights=self.get_normal(len(weights))
-                new_nest.update_wights(new_weights+best_nest.get_flatten_weights())
+                length=len(weights)
+                best_weights=self.Populations[int(np.random.randint(0,total_selecte_for_nesting))].get_flatten_weights().clone().detach()
+                new_weights=(self.get_normal(length)+best_weights)
+                index=torch.randint(0,length-1,size=(1,)).item()
+                new_weights[index]=torch.randint(-300,300,size=(1,)).item()
+                new_nest.update_wights(new_weights)
                 states=new_nest.calculate_reward()
                 self.env_means=torch.cat((self.env_means,states),dim=0)
                 self.env_stds=torch.cat((self.env_stds,states),dim=0)
-                if new_nest.reward>self.Populations[i].reward:
+                if new_nest.get_fitness_value()>self.Populations[i].get_fitness_value():
                     self.Populations[i]=copy.deepcopy(new_nest)
 
 
@@ -276,7 +269,7 @@ class Cuckoo:
                 max_solution=solution
             if min_reward>solution.reward:
                 min_reward=solution.reward
-            if solution.get_median()>max_solution_by_median.get_median():
+            if solution.get_fitness_value()>max_solution_by_median.get_fitness_value():
                 max_solution_by_median=solution
             reward_of_each_sol.append(solution.reward)
             
@@ -287,9 +280,9 @@ class Cuckoo:
             max_solution_by_median.save_weights(f"weights_{generation}_coperative_max_cross.pth")
             #save with highest median
 
-        if self.highest_reward!=0 and self.highest_reward!= max_solution.reward and max_solution.reward/self.highest_reward>=0.98:
-            max_solution.save_weights(f"weights_{generation}_individual_near_highest.pth")
-            max_solution_by_median.save_weights(f"weights_{generation}_coperative_near_highest.pth")
+        # if self.highest_reward!=0 and self.highest_reward!= max_solution.reward and max_solution.reward/self.highest_reward>=0.98:
+        #     max_solution.save_weights(f"weights_{generation}_individual_near_highest.pth")
+        #     max_solution_by_median.save_weights(f"weights_{generation}_coperative_near_highest.pth")
             
         if med_reward>=self.highest_median:
             max_solution.save_weights(f"weights_{generation}_individual_median_cross.pth")
@@ -298,11 +291,13 @@ class Cuckoo:
 
 
         print(f"Generation:{generation}/{self.generation_number} Med:{med_reward}<->MedPrev:{self.highest_median} MaxReward:{max_solution.reward} MinReward:{min_reward} RewardPrev: {self.highest_reward}  ")
-        self.writer.add_scalar("Current Median",med_reward,generation)
+        print(f"best nest have total experience of {len(max_solution_by_median.rewards)}->{max_solution_by_median.rewards}")
+        self.writer.add_scalar("Current Median",med_reward,generation,)
         self.writer.add_scalar("Past Median",self.highest_median,generation)
         self.writer.add_scalar("Current MaxReward",max_solution.reward,generation)
         self.writer.add_scalar("Current MinReward",min_reward,generation)
-        self.writer.add_scalar("Past MaxReward",self.highest_reward,generation)
+        self.writer.add_scalar("Past MaxReward",self.highest_reward,generation,)
+        
         self.writer.add_histogram("Best Performer",np.array(max_solution.rewards),generation)
 
 if __name__ == '__main__':
@@ -324,7 +319,7 @@ if __name__ == '__main__':
     #asyncio.run( agent.fit_multithreads())
 
 
-    #agent.eval("weights_1291_individual_near_highest.pth",30)
+    #agent.eval("lunarlander-continuous-cuckoo\weights_214_individual_max_cross.pth",30)
 
 #highest 174,167
 
