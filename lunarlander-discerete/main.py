@@ -13,8 +13,8 @@ from torch.utils.tensorboard.writer import SummaryWriter
 import asyncio
 
 
-
-gym_env=gym.make("LunarLander-v2")
+env_name="LunarLander-v2"
+gym_env=gym.make(env_name)
 
 def set_seed(seed_value=42):
 
@@ -56,6 +56,9 @@ class Solution:
         self.myenv=myenv
     def get_median(self):
         return np.median(self.rewards)
+    def get_fitness_value(self,length_weight=0.7,personal_reward_weight=0.25):
+        score=np.mean(self.rewards)+ length_weight*len(self.rewards)+self.reward*personal_reward_weight
+        return score
     def assign_random_values(self,):
         flat_weights=self.get_flatten_weights()
         index=0
@@ -100,12 +103,12 @@ class Solution:
         with torch.no_grad():
             done=False
             terminated=False
-            state=self.myenv.reset()
+            state,_=self.myenv.reset()
             self.net.to(self.device)
             total_reward=0
             for _ in range(self.max_iters+100):
                 action=self.net(torch.Tensor( state).to(self.device))
-                next_state,reward,done,info=self.myenv.step(action)
+                next_state,reward,done,terminated,info=self.myenv.step(action)
                 state=next_state
                 total_reward=total_reward+reward
                 if done or terminated:
@@ -210,7 +213,7 @@ class GA:
                 max_solution=solution
             if min_reward>solution.reward:
                 min_reward=solution.reward
-            if solution.get_median()>max_solution_by_median.get_median():
+            if solution.get_fitness_value()>max_solution_by_median.get_fitness_value():
                 max_solution_by_median=solution
             reward_of_each_sol.append(solution.reward)
             
@@ -230,8 +233,9 @@ class GA:
             self.highest_median=med_reward
             max_solution_by_median.save_weights(f"weights_{generation}_coperative_median_cross.pth")
 
-
-        print(f"Generation:{generation}/{self.generation_number} Med:{med_reward}<->MedPrev:{self.highest_median} MaxReward:{max_solution.reward} MinReward:{min_reward} RewardPrev: {self.highest_reward}  ")
+        if generation%10==0:
+            print(f"Generation:{generation}/{self.generation_number} Med:{med_reward}<->MedPrev:{self.highest_median} MaxReward:{max_solution.reward} MinReward:{min_reward} RewardPrev: {self.highest_reward}  ")
+        print(f"best gene have total experience of {len(max_solution_by_median.rewards)}->{max_solution_by_median.rewards}")
         self.writer.add_scalar("Current Median",med_reward,generation)
         self.writer.add_scalar("Past Median",self.highest_median,generation)
         self.writer.add_scalar("Current MaxReward",max_solution.reward,generation)
@@ -242,7 +246,7 @@ class GA:
     def selection(self,):
         parents=[]
         rand_num_for_pop_parents=np.random.randint(4,self.population_size)
-        self.Populations= sorted(self.Populations,key=lambda x: x.get_median(),reverse=True)
+        self.Populations= sorted(self.Populations,key=lambda x: x.get_fitness_value(),reverse=True)
         parents.extend(copy.deepcopy(self.Populations[:rand_num_for_pop_parents]))
         del self.Populations[:]
         return parents
@@ -340,7 +344,7 @@ class GA:
 TOTAL_STATES=gym_env.observation_space.shape[0]
 TOTAL_ACTIONS=gym_env.action_space.n
 POPULATION_SIZE = 40
-MAX_GENERATION = 2000
+MAX_GENERATION = 4000
 
 MUTATION_RATE = 0.4
 CROSSOVER_RATE = 0.9
@@ -350,7 +354,7 @@ agent=GA(TOTAL_STATES,TOTAL_ACTIONS,POPULATION_SIZE,generation_number=MAX_GENERA
 #asyncio.run(agent.fit_multithreads())
 
 
-agent.eval("lunarlander-discerete\weights_1956_individual_near_highest.pth",30)
+agent.eval("lunarlander-discerete\weights\weights\weights_1949_individual_median_cross.pth",30)
 
 #highest 174,167
 
