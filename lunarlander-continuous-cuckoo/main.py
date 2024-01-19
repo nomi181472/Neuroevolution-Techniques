@@ -90,7 +90,7 @@ class Solution:
 
         done=False
         terminated=False
-        state,_=gym_env.reset()
+        state,_=self.myenv.reset()
         self.net.to(self.device)
         total_reward=0
         states=torch.empty(0)
@@ -98,31 +98,36 @@ class Solution:
             tensor_state=torch.Tensor( state)
             action=self.net(tensor_state.to(self.device))
             states=torch.cat((states, tensor_state), dim=0)
-            next_state,reward,done,terminated,info=gym_env.step(np.array(action))
+            next_state,reward,done,terminated,info=self.myenv.step(np.array(action))
             state=next_state
             total_reward=total_reward+reward
             if done or terminated:
                 break
         self.reward=round(total_reward,2)
-        self.rewards.append(round(total_reward,2))
+        self.rewards.append(self.reward)
         return states
 
-    async def calculate_reward_multi(self):
+    async def calculate_reward_async(self):
+        states=torch.empty(0)
         with torch.no_grad():
             done=False
             terminated=False
             state,_=self.myenv.reset()
             self.net.to(self.device)
             total_reward=0
+            
             for _ in range(self.max_iters+100):
-                action=self.net(torch.Tensor( state).to(self.device))
-                next_state,reward,done,terminated,info=self.myenv.step(action.numpy())
+                tensor_state=torch.Tensor( state)
+                action=self.net(tensor_state.to(self.device))
+                states=torch.cat((states, tensor_state), dim=0)
+                next_state,reward,done,terminated,info=self.myenv.step(np.array(action))
                 state=next_state
                 total_reward=total_reward+reward
                 if done or terminated:
                     break
             self.reward=round(total_reward,2)
-            self.rewards.append(round(total_reward,2))
+            self.rewards.append(self.reward)
+        return states
   
     @torch.no_grad()    
     def test(self,):
@@ -179,62 +184,99 @@ class Cuckoo:
         total_selecte_for_nesting=int(self.population_size*self.alpha)
         for generation in range(self.generation_number):
             t1=time.time()
-
-           
             self.Populations=sorted(self.Populations,key=lambda x: x.get_fitness_value(),reverse=True)
-
-            print(f"best nest have total experience of {len(self.Populations[0].rewards)}->{self.Populations[0].rewards}")
             for i in range(total_selecte_for_nesting):
                 # Generate new solutions (cuckoo eggs) using Levy flights
-                ith_nest=self.Populations[i].get_flatten_weights()
-                step = torch.tensor(self.levy_flight(),dtype=torch.float32) 
-                indicies=torch.randint(1, len(ith_nest), (torch.randint(1,total_selecte_for_nesting,size=(1,)).item(),))
-                ith_nest[indicies] = ith_nest[indicies] + step * torch.tensor(self.get_normal(len(ith_nest[indicies])),dtype=torch.float32)
-                self.Populations[i].update_wights(ith_nest)
-                states=self.Populations[i].calculate_reward()
-                self.env_means=torch.cat((self.env_means,states),dim=0)
-                self.env_stds=torch.cat((self.env_stds,states),dim=0)
+                self.generate_egg_using_levy_flights(total_selecte_for_nesting, i)
             # Abandon a fraction (Pa) of worse nests
             for i in range(total_selecte_for_nesting, self.population_size):
-                new_nest = Solution(NeuralNetwork(input=self.input,output=self.output),myenv=gym.make(env_name,continuous=True),device=self.device)
-                weights=new_nest.get_flatten_weights()
-                length=len(weights)
-                best_weights=self.Populations[int(np.random.randint(0,total_selecte_for_nesting))].get_flatten_weights().clone().detach()
-                new_weights=(self.get_normal(length)+best_weights)
-                index=torch.randint(0,length-1,size=(1,)).item()
-                new_weights[index]=torch.randint(-300,300,size=(1,)).item()
-                new_nest.update_wights(new_weights)
-                states=new_nest.calculate_reward()
-                self.env_means=torch.cat((self.env_means,states),dim=0)
-                self.env_stds=torch.cat((self.env_stds,states),dim=0)
-                if new_nest.get_fitness_value()>self.Populations[i].get_fitness_value():
-                    self.Populations[i]=copy.deepcopy(new_nest)
-
+                self.abondon_worst_nest(total_selecte_for_nesting, i)
+            
 
             self.statistics(generation=generation)
 
             print(f"Time Taken: {round(time.time()-t1,2)}")
         self.writer.close()
-    async def fit_multithreads(self,):
+
+    def abondon_worst_nest(self, total_selecte_for_nesting, i):
+        new_nest = Solution(NeuralNetwork(input=self.input,output=self.output),myenv=gym.make(env_name,continuous=True),device=self.device)
+        weights=new_nest.get_flatten_weights()
+        length=len(weights)
+        best_weights=self.Populations[int(np.random.randint(0,total_selecte_for_nesting))].get_flatten_weights().clone().detach()
+        new_weights=(self.get_normal(length)+best_weights)
+        index=torch.randint(0,length-1,size=(1,)).item()
+        new_weights[index]=torch.randint(-300,300,size=(1,)).item()
+        new_nest.update_wights(new_weights)
+        states=new_nest.calculate_reward()
+        self.env_means=torch.cat((self.env_means,states),dim=0)
+        self.env_stds=torch.cat((self.env_stds,states),dim=0)
+        if new_nest.get_fitness_value()>self.Populations[i].get_fitness_value():
+            self.Populations[i]=copy.deepcopy(new_nest)
+    async def abondon_worst_nest_async(self, total_selecte_for_nesting, i):
+        new_nest = Solution(NeuralNetwork(input=self.input,output=self.output),myenv=gym.make(env_name,continuous=True),device=self.device)
+        weights=new_nest.get_flatten_weights()
+        length=len(weights)
+        best_weights=self.Populations[int(np.random.randint(0,total_selecte_for_nesting))].get_flatten_weights().clone().detach()
+        new_weights=(self.get_normal(length)+best_weights)
+        index=torch.randint(0,length-1,size=(1,)).item()
+        new_weights[index]=torch.randint(-300,300,size=(1,)).item()
+        new_nest.update_wights(new_weights)
+        states=await new_nest.calculate_reward_async()
+        self.env_means=torch.cat((self.env_means,states),dim=0)
+        self.env_stds=torch.cat((self.env_stds,states),dim=0)
+        if new_nest.get_fitness_value()>self.Populations[i].get_fitness_value():
+            self.Populations[i]=copy.deepcopy(new_nest)
+
+    def generate_egg_using_levy_flights(self, total_selecte_for_nesting, i):
+        ith_nest=self.Populations[i].get_flatten_weights()
+        step = torch.tensor(self.levy_flight(),dtype=torch.float32) 
+        indicies=torch.randint(1, len(ith_nest), (torch.randint(1,total_selecte_for_nesting,size=(1,)).item(),))
+        ith_nest[indicies] = ith_nest[indicies] + step * torch.tensor(self.get_normal(len(ith_nest[indicies])),dtype=torch.float32)
+        self.Populations[i].update_wights(ith_nest)
+        states=self.Populations[i].calculate_reward()
+        self.env_means=torch.cat((self.env_means,states),dim=0)
+        self.env_stds=torch.cat((self.env_stds,states),dim=0)
+    async def generate_egg_using_levy_flights_async(self, total_selecte_for_nesting, i):
+        ith_nest=self.Populations[i].get_flatten_weights()
+        step = torch.tensor(self.levy_flight(),dtype=torch.float32) 
+        indicies=torch.randint(1, len(ith_nest), (torch.randint(1,total_selecte_for_nesting,size=(1,)).item(),))
+        ith_nest[indicies] = ith_nest[indicies] + step * torch.tensor(self.get_normal(len(ith_nest[indicies])),dtype=torch.float32)
+        self.Populations[i].update_wights(ith_nest)
+        states=await self.Populations[i].calculate_reward_async()
+        self.env_means=torch.cat((self.env_means,states),dim=0)
+        self.env_stds=torch.cat((self.env_stds,states),dim=0)
+    async def fit_async(self,):
+        #Initial best solution
         self.Populations=[Solution(NeuralNetwork(input=self.input,output=self.output),myenv=gym.make(env_name,continuous=True),device=self.device) for _ in range(self.population_size)]
-        for i in range(self.population_size):
-            self.Populations[i].assign_random_values()
-        
+        #evaluate performance
+        for sol in self.Populations:
+            states=sol.calculate_reward()
+            self.env_means=torch.cat((self.env_means,states),dim=0)
+            self.env_stds=torch.cat((self.env_stds,states),dim=0)
+
+        total_selecte_for_nesting=int(self.population_size*self.alpha)
         for generation in range(self.generation_number):
             t1=time.time()
+            self.Populations=sorted(self.Populations,key=lambda x: x.get_fitness_value(),reverse=True)
 
+            print(f"best nest have total experience of {len(self.Populations[0].rewards)}->{self.Populations[0].rewards}")
             processes=[]
-            
-            for sol in self.Populations:
-                task = asyncio.create_task(sol.calculate_reward_multi())
+            for i in range(total_selecte_for_nesting):
+                # Generate new solutions (cuckoo eggs) using Levy flights
+                task = asyncio.create_task(self.generate_egg_using_levy_flights_async(total_selecte_for_nesting, i))
                 processes.append(task)
-
-
+                
+            # Abandon a fraction (Pa) of worse nests
+            await asyncio.gather(*processes)
+            processes=[]
+            for i in range(total_selecte_for_nesting, self.population_size):
+                task = asyncio.create_task(self.abondon_worst_nest_async(total_selecte_for_nesting, i))
+                processes.append(task)
+                
+            
             await asyncio.gather(*processes)
 
-
             self.statistics(generation=generation)
-            self.evolve_population()
             print(f"Time Taken: {round(time.time()-t1,2)}")
         self.writer.close()
     def levy_flight(self):
@@ -315,8 +357,8 @@ if __name__ == '__main__':
     
     set_seed(4)
     agent=Cuckoo(TOTAL_STATES,TOTAL_ACTIONS,POPULATION_SIZE,generation_number=MAX_GENERATION)
-    agent.fit()
-    #asyncio.run( agent.fit_multithreads())
+    #agent.fit()
+    asyncio.run( agent.fit_async())
 
 
     #agent.eval("lunarlander-continuous-cuckoo\weights_214_individual_max_cross.pth",30)
