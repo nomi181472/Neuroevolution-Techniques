@@ -6,7 +6,7 @@ import random
 import copy 
 import time
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
+
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import os
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -32,21 +32,22 @@ class NeuralNetwork(nn.Module):
         super(NeuralNetwork,self,).__init__()
         #TODO generic neural network
         self.seq=nn.Sequential(
-            nn.Linear(input,36,bias=False),
+            nn.Linear(input,24,bias=True),
             nn.LeakyReLU(-0.1),
-            nn.Linear(36,36,bias=False),
+            nn.Linear(24,24,bias=True),
             nn.LeakyReLU(-0.1),
-            nn.Linear(36,output,bias=False),
+            nn.Linear(24,output,bias=True),
            nn.Softmax(dim=0)
         )
     def forward(self,x):
         x=self.seq(x)
         x=torch.argmax(x).item()
         return x
-
 class Solution:
-    def __init__(self,net:NeuralNetwork,myenv,max_iters=100,device="cpu",):
+    def __init__(self,net:NeuralNetwork,myenv,max_iters=100,device="cpu",
+                 buffer_size=100):
         self.rewards=np.empty(0)
+        self.buffer_size=buffer_size
         self.net=net
         self.device=device
         self.net.to(self.device)
@@ -54,7 +55,7 @@ class Solution:
         self.myenv=myenv
     def get_median(self):
         return np.median(self.rewards)
-    def get_fitness_value(self,max_score=280,length_weight=0.4,personal_reward_weight=0.25,):
+    def get_fitness_value(self,max_score=280,length_weight=0.7,personal_reward_weight=0.3,):
         score=np.median(self.rewards)+ length_weight*len(self.rewards)+self.rewards[-1]*personal_reward_weight
         score=score+np.sum(self.rewards>max_score)
         return score
@@ -81,7 +82,7 @@ class Solution:
             total_reward=total_reward+curr_step_reward
             if done or terminated:
                 break
-        self.rewards=np.append(self.rewards,round(total_reward,2))
+        self.update_reward_buffer(total_reward)
     @torch.no_grad()  
     async def calculate_reward_async(self):
         with torch.no_grad():
@@ -97,7 +98,13 @@ class Solution:
                 total_reward=total_reward+curr_step_reward
                 if done or terminated:
                     break
-            self.rewards=np.append(self.rewards,round(total_reward,2))
+            self.update_reward_buffer(total_reward)
+
+    def update_reward_buffer(self, total_reward):
+        if len(self.rewards)+1>self.buffer_size:
+            self.rewards=np.delete(self.rewards,-1)
+        self.rewards=np.append(self.rewards,round(total_reward,2))
+
   
     @torch.no_grad()    
     def test(self,):
@@ -324,9 +331,9 @@ MAX_GENERATION = 4000
 set_seed(4)
 agent=GA(TOTAL_STATES,TOTAL_ACTIONS,POPULATION_SIZE,generation_number=MAX_GENERATION)
 #asyncio.run(agent.fit_multithreads())
-#agent.fit()
+agent.fit()
 
-agent.eval("lunarlander-discerete/best_collective.pth",30)
+agent.eval("lunarlander-discerete/best_collective (2).pth",30)
 
 #highest 174,167
 
@@ -335,8 +342,8 @@ agent.eval("lunarlander-discerete/best_collective.pth",30)
 
 #TODO cv2 show rewards 
 #TODO try to make a package
-#TODO try to use multibatchprocessing
 #TODO match with existing algorithm
-#TODO Research on GA how to select, crossover and mutation
-#TODO save weights on both median and max rewards
-#TODO comparies boths
+#TODO use pso
+#TODO scalar.normalize each state
+#TODO Use Neat
+#TODO use Deque and increase length weight
